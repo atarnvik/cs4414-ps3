@@ -1,0 +1,11 @@
+Exploration 1: Benchmarking
+
+Exploration 2: Smarter Scheduling
+	1. How many tasks are running before the first request arrives?
+		1 - the task that uses the TCP listener. 
+
+	2. What are all the tasks that are involves in handling a request?
+		2 total - 1 to handle the TCP listener (which is running before the first request arrives), and then 1 to actually handle the connection
+
+	3. If a series of requests, r1, r2, ..., rn arrives in order, what can you say about the order in which the server will respond to them?
+		In the order that they came in - it's a FIFO queue as described in the comments based on the methods used on the request OwnedVector...makes sense though, because it's basically like who gets in line first.
