@@ -24,6 +24,7 @@ use std::hashmap::HashMap;
 
 use extra::getopts;
 use extra::arc::MutexArc;
+use extra::priority_queue::PriorityQueue;
 
 static SERVER_NAME : &'static str = "Zhtta Version 0.5";
 
@@ -52,12 +53,31 @@ struct HTTP_Request {
     path: ~Path,
 }
 
+impl std::cmp::Eq for HTTP_Request {
+    fn eq(&self, other: &HTTP_Request) -> bool {
+        (other.peer_name.slice_to(7) == "128.143." || other.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") &&
+        (self.peer_name.slice_to(7) == "128.143." || self.peer_name.slice_to(6) == "137.54." || self.peer_name.slice_to(9) == "127.0.0.1") 
+    }
+}
+
+impl std::cmp::Ord for HTTP_Request {
+    fn lt(&self, other: &HTTP_Request) -> bool {
+        (other.peer_name.slice_to(7) != "128.143." || other.peer_name.slice_to(6) != "137.54." || other.peer_name.slice_to(9) != "127.0.0.1") &&
+        (self.peer_name.slice_to(7) == "128.143." || self.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") 
+    }
+
+    fn gt(&self, other: &HTTP_Request) -> bool {
+        (other.peer_name.slice_to(7) == "128.143." || other.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") &&
+        (self.peer_name.slice_to(7) != "128.143." || self.peer_name.slice_to(6) != "137.54." || other.peer_name.slice_to(9) != "127.0.0.1") 
+    }
+}
+
 struct WebServer {
     ip: ~str,
     port: uint,
     www_dir_path: ~Path,
     
-    request_queue_arc: MutexArc<~[HTTP_Request]>,
+    request_queue_arc: MutexArc<PriorityQueue<HTTP_Request>>,
     stream_map_arc: MutexArc<HashMap<~str, Option<std::io::net::tcp::TcpStream>>>,
     
     notify_port: Port<()>,
@@ -75,7 +95,7 @@ impl WebServer {
             port: port,
             www_dir_path: www_dir_path,
                         
-            request_queue_arc: MutexArc::new(~[]),
+            request_queue_arc: MutexArc::new(PriorityQueue::new()),
             stream_map_arc: MutexArc::new(HashMap::new()),
             
             notify_port: notify_port,
@@ -195,7 +215,7 @@ impl WebServer {
     }
     
     // TODO: Smarter Scheduling.
-    fn enqueue_static_file_request(stream: Option<std::io::net::tcp::TcpStream>, path_obj: &Path, stream_map_arc: MutexArc<HashMap<~str, Option<std::io::net::tcp::TcpStream>>>, req_queue_arc: MutexArc<~[HTTP_Request]>, notify_chan: SharedChan<()>) {
+    fn enqueue_static_file_request(stream: Option<std::io::net::tcp::TcpStream>, path_obj: &Path, stream_map_arc: MutexArc<HashMap<~str, Option<std::io::net::tcp::TcpStream>>>, req_queue_arc: MutexArc<PriorityQueue<HTTP_Request>>, notify_chan: SharedChan<()>) {
         // Save stream in hashmap for later response.
         let mut stream = stream;
         let peer_name = WebServer::get_peer_name(&mut stream);
@@ -239,7 +259,7 @@ impl WebServer {
             self.notify_port.recv();    // waiting for new request enqueued.
             
             req_queue_get.access( |req_queue| {
-                match req_queue.shift_opt() { // FIFO queue.
+                match req_queue.maybe_pop() { // Priority queue.
                     None => { /* do nothing */ }
                     Some(req) => {
                         request_chan.send(req);
