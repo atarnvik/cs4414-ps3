@@ -5,5 +5,5 @@
 </style></head>
 <body>
 <h1>Greetings, Krusty!</h1>
-<h2>Date: <!--#exec cmd="date" --></h2>
+<h2>Date:<!--#exec cmd="date" --></h2>
 </body></html>

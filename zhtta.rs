@@ -236,39 +236,60 @@ impl WebServer {
     
     // TODO: Server-side gashing.
     fn respond_with_dynamic_page(stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
-        // for now, just serve as static file
-        // let shtml_file = File::open(path);
-        // let mut rwStream = BufferedStream::new(shtml_file);
-        // let mut newFile : ~[~str] = ~[];
-        // for line in rwStream.lines() {
-        //     let mut check : bool = false;
-        //     let mut newLine : ~[~str] = ~[];
-        //     for split in line.split(' ') {
-        //         if(check) {
-        //             let cmdSplit : ~[&str] = split.split('=').collect();
-        //             let command : ~str = cmdSplit[1].to_owned();
-        //             let finalCommand = command.slice(1,command.len()-1).to_owned();
-        //             let output : ~str = gash::run_cmdline(finalCommand);
-        //             //println(output);
-        //             newLine.push(output);
-        //             check = false;
-        //         }
-        //         else if(split == "<!--#exec") {
-        //             check = true;
-        //         }
-        //         else {
-        //             newLine.push(split.to_owned());
-        //             newLine.push(" ".to_owned());
-        //         }
-        //     }
-        //     println!("{:?}", newLine);
-        //     let fullLine : ~str = "";
-        //     for s in newLine.iter() {
-        //         fullLine = fullLine + s;
-        //     }
-        //     //newFile.push()
-        // }
-        WebServer::respond_with_static_file(stream, path);
+        //for now, just serve as static file
+        let mut shtml_file = File::open(path);
+        let mut rwStream = BufferedStream::new(shtml_file);
+        let mut newFile : ~[~str] = ~[];
+
+        let mut checkIfLastIsCmd : bool = false;
+        for line in rwStream.lines() {
+            let mut check : bool = false;
+            let mut newLine : ~[~str] = ~[];
+            for split in line.split(' ') {
+                if(check) {
+                    let cmdSplit : ~[&str] = split.split('=').collect();
+                    let command : ~str = cmdSplit[1].to_owned();
+                    let finalCommand = command.slice(1,command.len()-1).to_owned();
+                    let output : ~str = gash::run_cmdline(finalCommand);
+                    newLine.push(output);
+                    check = false;
+                    checkIfLastIsCmd = true;
+                }
+                else if(split == "<!--#exec") {
+                    check = true;
+                }
+                else if(split == "-->") {
+
+                }
+                else {
+                    if(checkIfLastIsCmd && split.slice(0, 3) == "-->") {
+                        newLine.push(split.slice_from(3).to_owned());
+                        newLine.push(" ".to_owned());
+                        checkIfLastIsCmd = false;
+                    }
+                    else if(split.len() > 9 && split.slice_from(split.len() - 9) == "<!--#exec") {
+                        newLine.push(split.slice(0, split.len()-9).to_owned());
+                        check = true;                    }
+                    else {
+                        newLine.push(split.to_owned());
+                        newLine.push(" ".to_owned()); 
+                    }
+                }
+            }
+            let mut fullLine : ~str = ~"";
+            for s in newLine.iter() {
+                fullLine = fullLine + s.clone();
+            }
+            newFile.push(fullLine);
+        }
+        let mut fullPage : ~str = ~"";
+        for s in newFile.iter() {
+            fullPage = fullPage + s.clone();
+        }
+        let mut stream = stream;
+        stream.write(HTTP_OK.as_bytes());
+        stream.write(fullPage.as_bytes());        
+        
     }
     
     // TODO: Smarter Scheduling.
