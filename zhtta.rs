@@ -24,7 +24,14 @@ use std::hashmap::HashMap;
 
 use extra::getopts;
 use extra::arc::MutexArc;
+use extra::arc::RWArc;
+
 use extra::priority_queue::PriorityQueue;
+
+use std::io::buffered::BufferedStream;
+use std::io::File;
+
+mod gash;
 
 static SERVER_NAME : &'static str = "Zhtta Version 0.5";
 
@@ -42,7 +49,6 @@ static COUNTER_STYLE : &'static str = "<doctype !html><html><head><title>Hello, 
              </style></head>
              <body>";
 
-static mut visitor_count : uint = 0;
 
 struct HTTP_Request {
     // Use peer_name as the key to access TcpStream in hashmap. 
@@ -120,6 +126,11 @@ impl WebServer {
             let mut acceptor = net::tcp::TcpListener::bind(addr).listen();
             println!("{:s} listening on {:s} (serving from: {:s}).", 
                      SERVER_NAME, addr.to_str(), www_dir_path_str);
+
+            //Visitor counter
+            let num_visitor : uint = 0;
+            //Arc for visitor counter.
+            let visitor_arc_mut = RWArc::new(num_visitor);            
             
             for stream in acceptor.incoming() {
                 let (queue_port, queue_chan) = Chan::new();
@@ -127,11 +138,25 @@ impl WebServer {
                 
                 let notify_chan = shared_notify_chan.clone();
                 let stream_map_arc = stream_map_arc.clone();
+
+                let(portMut, chanMut) = Chan::new();
+                chanMut.send(visitor_arc_mut.clone());
                 
                 // Spawn a task to handle the connection.
                 spawn(proc() {
-                    unsafe { visitor_count += 1; } // TODO: Fix unsafe counter
                     let request_queue_arc = queue_port.recv();
+
+                    //This updates counter by adding one to it.
+                    let local_arc_mut = portMut.recv();
+                    local_arc_mut.write(|value| {
+                        *value += 1
+                    }); 
+                    //This sets a local variable to current count.
+                    let mut visitor_count_local : uint = 0;
+                    local_arc_mut.read(|value| {
+                        //println(value.to_str());
+                        visitor_count_local = *value;
+                    });
                   
                     let mut stream = stream;
                     
@@ -159,7 +184,7 @@ impl WebServer {
                              
                         if path_str == ~"./" {
                             debug!("===== Counter Page request =====");
-                            WebServer::respond_with_counter_page(stream);
+                            WebServer::respond_with_counter_page(stream, &visitor_count_local);
                             debug!("=====Terminated connection from [{:s}].=====", peer_name);
                         } else if !path_obj.exists() || path_obj.is_dir() {
                             debug!("===== Error page request =====");
@@ -188,13 +213,14 @@ impl WebServer {
     }
 
     // TODO: Safe visitor counter.
-    fn respond_with_counter_page(stream: Option<std::io::net::tcp::TcpStream>) {
+    fn respond_with_counter_page(stream: Option<std::io::net::tcp::TcpStream>, visitor_count_local: &uint) {
         let mut stream = stream;
+        let visitor_count_other : uint = visitor_count_local.clone();
         let response: ~str = 
             format!("{:s}{:s}<h1>Greetings, Krusty!</h1>
                      <h2>Visitor count: {:u}</h2></body></html>\r\n", 
                     HTTP_OK, COUNTER_STYLE, 
-                    unsafe { visitor_count } );
+                    visitor_count_other);
         debug!("Responding to counter request");
         stream.write(response.as_bytes());
     }
@@ -211,6 +237,37 @@ impl WebServer {
     // TODO: Server-side gashing.
     fn respond_with_dynamic_page(stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
         // for now, just serve as static file
+        // let shtml_file = File::open(path);
+        // let mut rwStream = BufferedStream::new(shtml_file);
+        // let mut newFile : ~[~str] = ~[];
+        // for line in rwStream.lines() {
+        //     let mut check : bool = false;
+        //     let mut newLine : ~[~str] = ~[];
+        //     for split in line.split(' ') {
+        //         if(check) {
+        //             let cmdSplit : ~[&str] = split.split('=').collect();
+        //             let command : ~str = cmdSplit[1].to_owned();
+        //             let finalCommand = command.slice(1,command.len()-1).to_owned();
+        //             let output : ~str = gash::run_cmdline(finalCommand);
+        //             //println(output);
+        //             newLine.push(output);
+        //             check = false;
+        //         }
+        //         else if(split == "<!--#exec") {
+        //             check = true;
+        //         }
+        //         else {
+        //             newLine.push(split.to_owned());
+        //             newLine.push(" ".to_owned());
+        //         }
+        //     }
+        //     println!("{:?}", newLine);
+        //     let fullLine : ~str = "";
+        //     for s in newLine.iter() {
+        //         fullLine = fullLine + s;
+        //     }
+        //     //newFile.push()
+        // }
         WebServer::respond_with_static_file(stream, path);
     }
     

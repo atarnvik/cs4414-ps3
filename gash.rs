@@ -149,3 +149,5 @@ mod tests {
         assert_eq!(ret_str, ~"abc");
     }
 }
+
+fn main() {}
