@@ -231,7 +231,13 @@ impl WebServer {
         let mut stream = stream;
         let mut file_reader = File::open(path).expect("Invalid file!");
         stream.write(HTTP_OK.as_bytes());
-        stream.write(file_reader.read_to_end());
+        let byteLength : uint = 1;
+        while(true) {
+            match (file_reader.read_byte()) {
+                Some (byte) => {stream.write_u8(byte);}
+                None => {break}
+            }
+        }
     }
     
     // TODO: Server-side gashing.
