@@ -22,6 +22,7 @@ use std::{os, str, libc, from_str};
 use std::path::Path;
 use std::hashmap::HashMap;
 
+
 use extra::getopts;
 use extra::arc::MutexArc;
 use extra::arc::RWArc;
@@ -30,6 +31,8 @@ use extra::priority_queue::PriorityQueue;
 
 use std::io::buffered::BufferedStream;
 use std::io::File;
+use std::io::fs;
+
 
 mod gash;
 
@@ -61,18 +64,45 @@ struct HTTP_Request {
 
 impl std::cmp::Eq for HTTP_Request {
     fn eq(&self, other: &HTTP_Request) -> bool {
-        (other.peer_name.slice_to(7) == "128.143." || other.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") &&
-        (self.peer_name.slice_to(7) == "128.143." || self.peer_name.slice_to(6) == "137.54." || self.peer_name.slice_to(9) == "127.0.0.1") 
+        let sizeSelf = fs::stat(self.path).size;
+        let sizeOther = fs::stat(other.path).size;
+
+        if sizeOther == sizeSelf {
+            if (other.peer_name.slice_to(7) == "128.143." || other.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") && (self.peer_name.slice_to(7) == "128.143." || self.peer_name.slice_to(6) == "137.54." || self.peer_name.slice_to(9) == "127.0.0.1") {
+                return true;
+            }
+        }
+        return false;
     }
 }
 
 impl std::cmp::Ord for HTTP_Request {
     fn lt(&self, other: &HTTP_Request) -> bool {
+        //First get the file sizes for the Http_Request
+
+        let sizeSelf = fs::stat(self.path).size;
+        let sizeOther = fs::stat(other.path).size;
+
+        if sizeOther > sizeSelf {
+            return true;
+        }
+        else if sizeSelf > sizeOther {
+            return false;
+        }
         (other.peer_name.slice_to(7) != "128.143." || other.peer_name.slice_to(6) != "137.54." || other.peer_name.slice_to(9) != "127.0.0.1") &&
         (self.peer_name.slice_to(7) == "128.143." || self.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") 
     }
 
     fn gt(&self, other: &HTTP_Request) -> bool {
+        let sizeSelf = fs::stat(self.path).size;
+        let sizeOther = fs::stat(other.path).size;
+
+        if sizeOther < sizeSelf {
+            return true;
+        }
+        else if sizeSelf > sizeOther {
+            return false;
+        }
         (other.peer_name.slice_to(7) == "128.143." || other.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") &&
         (self.peer_name.slice_to(7) != "128.143." || self.peer_name.slice_to(6) != "137.54." || other.peer_name.slice_to(9) != "127.0.0.1") 
     }
@@ -365,10 +395,12 @@ impl WebServer {
             }
             
             // TODO: Spawning more tasks to respond the dequeued requests concurrently. You may need a semophore to control the concurrency.
-            let stream = stream_port.recv();
-            WebServer::respond_with_static_file(stream, request.path);
-            // Close stream automatically.
-            debug!("=====Terminated connection from [{:s}].=====", request.peer_name);
+            spawn(proc() {
+                let stream = stream_port.recv();
+                WebServer::respond_with_static_file(stream, request.path);
+                // Close stream automatically.
+                debug!("=====Terminated connection from [{:s}].=====", request.peer_name);
+            });
         }
     }
     
