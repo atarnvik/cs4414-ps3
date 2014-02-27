@@ -1,4 +1,12 @@
 Exploration 1: Benchmarking
+	When benchmarking with 1000 connections:
+		The average transfer response time was 1 ms more in zhttpto than in zhtta. The average connection time was also 2 ms greater. However, the total test durations were the same down to 1 millisecond (9.990 v . 9.991).
+
+	Zhtta.txt
+		Same small differences in response and connection times for files that worked.
+
+	Clearly the newer server has better performance - and we expect this because we're using more tasks which allows for faster responses and thus frees up connections sooner.
+
 
 Exploration 2: Smarter Scheduling
 	1. How many tasks are running before the first request arrives?
