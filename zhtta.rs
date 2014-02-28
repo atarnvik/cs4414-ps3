@@ -86,27 +86,11 @@ impl std::cmp::Ord for HTTP_Request {
         if sizeOther > sizeSelf {
             return true;
         }
-        else if sizeSelf > sizeOther {
-            return false;
-        }
-        (other.peer_name.slice_to(7) != "128.143." || other.peer_name.slice_to(6) != "137.54." || other.peer_name.slice_to(9) != "127.0.0.1") &&
-        (self.peer_name.slice_to(7) == "128.143." || self.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") 
-    }
-
-    fn gt(&self, other: &HTTP_Request) -> bool {
-        let sizeSelf = fs::stat(self.path).size;
-        let sizeOther = fs::stat(other.path).size;
-
-        if sizeOther < sizeSelf {
-            return true;
-        }
-        else if sizeSelf > sizeOther {
-            return false;
-        }
-        (other.peer_name.slice_to(7) == "128.143." || other.peer_name.slice_to(6) == "137.54." || other.peer_name.slice_to(9) == "127.0.0.1") &&
-        (self.peer_name.slice_to(7) != "128.143." || self.peer_name.slice_to(6) != "137.54." || other.peer_name.slice_to(9) != "127.0.0.1") 
+        return getPriority(self.peer_name.clone()) < getPriority(other.peer_name.clone());
     }
 }
+
+
 
 struct WebServer {
     ip: ~str,
@@ -352,7 +336,9 @@ impl WebServer {
         req_queue_arc.access(|local_req_queue| {
             debug!("Got queue mutex lock.");
             let req: HTTP_Request = req_port.recv();
+            let name = req.peer_name.clone();
             local_req_queue.push(req);
+            debug!("Priority of new request is {:d}", getPriority(name.clone()));
             debug!("A new request enqueued, now the length of queue is {:u}.", local_req_queue.len());
         });
         
@@ -472,3 +458,13 @@ fn main() {
     let mut zhtta = WebServer::new(ip_str, port, www_dir_str);
     zhtta.run();
 }
+
+fn getPriority(other: ~str) -> int{
+        if(other.slice_to(7) == "128.143." || other.slice_to(6) == "137.54." || other.slice_to(9) == "127.0.0.1") {
+            debug!("{:s} Piority: 1", other);
+            return 1;
+        } else {
+            debug!("{:s} Piority: 2", other);
+            return 2;
+        }
+    }
