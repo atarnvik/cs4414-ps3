@@ -13,6 +13,9 @@
 
 // To see debug! outputs set the RUST_LOG environment variable, e.g.: export RUST_LOG="zhtta=debug"
 
+// Problem 7 design decision: cache should not be bigger than 10 MB
+    // remove last modified files
+
 #[feature(globs)];
 extern mod extra;
 
@@ -101,6 +104,7 @@ struct WebServer {
     
     request_queue_arc: MutexArc<PriorityQueue<HTTP_Request>>,
     stream_map_arc: MutexArc<HashMap<~str, Option<std::io::net::tcp::TcpStream>>>,
+    cache_arc: MutexArc<~[~Path]>,
     
     notify_port: Port<()>,
     shared_notify_chan: SharedChan<()>,
@@ -119,10 +123,22 @@ impl WebServer {
                         
             request_queue_arc: MutexArc::new(PriorityQueue::new()),
             stream_map_arc: MutexArc::new(HashMap::new()),
-            
+            cache_arc: MutexArc::new(~[]),
+
             notify_port: notify_port,
             shared_notify_chan: shared_notify_chan,        
         }
+    }
+
+    fn getCacheSize(&mut self) {
+         let mut size = 0;
+         self.cache_arc.access(|local_cache_queue| {
+            debug!("Got cache queue lock.");
+            for i in range(0, local_cache_queue.len()) { 
+                size += fs::stat(local_cache_queue[i]).size;
+            }
+        });
+        return size;
     }
     
     fn run(&mut self) {
@@ -240,10 +256,23 @@ impl WebServer {
         debug!("Responding to counter request");
         stream.write(response.as_bytes());
     }
+
+    fn removeCacheFile(&mut self) {
+        self.cache_arc.access(|local_cache_queue| {
+            debug!("Got cache queue lock.");
+            let mut old = -1;
+            for i in range(0, local_cache_queue.len()) { 
+                if(fs::stat(old).accessed < fs::stat(local_cache_queue[i]).accessed) {
+                    old = i;
+                }
+            }
+            local_cache_queue.remove(old);
+        });
+    }
     
     // TODO: Streaming file.
     // TODO: Application-layer file caching.
-    fn respond_with_static_file(stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
+    fn respond_with_static_file(&mut self, stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
         let mut stream = stream;
         let mut file_reader = File::open(path).expect("Invalid file!");
         stream.write(HTTP_OK.as_bytes());
@@ -254,7 +283,19 @@ impl WebServer {
                 None => {break}
             }
         }
+        // caching - find out if file is smaller than 10 MB
+        if(fs::stat(path).size < 10485760) {
+            // if cache is less than 10 MB with the file
+            while(self.getCacheSize() + fs::stat(path).size > 10485760) {
+                self.removeCacheFile();
+            }
+            self.cache_arc.access(|local_cache_queue| {
+                local_cache_queue.push(path);
+            });
+        }
     }
+
+
     
     // TODO: Server-side gashing.
     fn respond_with_dynamic_page(stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
