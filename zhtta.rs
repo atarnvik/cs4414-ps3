@@ -282,7 +282,9 @@ impl WebServer {
             }
             // add to cache!
             // automatically handles removing other elements if necessary
-            local_cache.put(path.clone(), byteArray);
+            if(fs::stat(path).size < 1000000) {
+                local_cache.put(path.clone(), byteArray);
+            }
         });
         
     }
