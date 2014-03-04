@@ -15,6 +15,7 @@
 
 // Problem 7 design decision: cache should not be bigger than 10 MB
     // remove last modified files
+    // check cache for files first!
 
 #[feature(globs)];
 extern mod extra;
@@ -29,7 +30,7 @@ use std::hashmap::HashMap;
 use extra::getopts;
 use extra::arc::MutexArc;
 use extra::arc::RWArc;
-
+use extra::lru_cache::LruCache;
 use extra::priority_queue::PriorityQueue;
 
 use std::io::buffered::BufferedStream;
@@ -104,10 +105,10 @@ struct WebServer {
     
     request_queue_arc: MutexArc<PriorityQueue<HTTP_Request>>,
     stream_map_arc: MutexArc<HashMap<~str, Option<std::io::net::tcp::TcpStream>>>,
-    cache_arc: MutexArc<~[~Path]>,
+    cache: LruCache<Path, ~[~u8]>,
     
     notify_port: Port<()>,
-    shared_notify_chan: SharedChan<()>,
+    shared_notify_chan: SharedChan<()>
 }
 
 impl WebServer {
@@ -123,23 +124,23 @@ impl WebServer {
                         
             request_queue_arc: MutexArc::new(PriorityQueue::new()),
             stream_map_arc: MutexArc::new(HashMap::new()),
-            cache_arc: MutexArc::new(~[]),
+            cache: LruCache<Path, ~[~u8]> = LruCache::new(10);
 
             notify_port: notify_port,
-            shared_notify_chan: shared_notify_chan,        
+            shared_notify_chan: shared_notify_chan        
         }
     }
 
-    fn getCacheSize(&mut self) {
+/*    fn getCacheSize(&mut self) -> u64{
          let mut size = 0;
          self.cache_arc.access(|local_cache_queue| {
             debug!("Got cache queue lock.");
             for i in range(0, local_cache_queue.len()) { 
-                size += fs::stat(local_cache_queue[i]).size;
+                size += fs::stat(&local_cache_queue[i]).size;
             }
         });
         return size;
-    }
+    }*/
     
     fn run(&mut self) {
         self.listen();
@@ -257,41 +258,78 @@ impl WebServer {
         stream.write(response.as_bytes());
     }
 
-    fn removeCacheFile(&mut self) {
+    /*fn removeCacheFile(&mut self) {
+        let mut old = -1;
         self.cache_arc.access(|local_cache_queue| {
             debug!("Got cache queue lock.");
-            let mut old = -1;
             for i in range(0, local_cache_queue.len()) { 
-                if(fs::stat(old).accessed < fs::stat(local_cache_queue[i]).accessed) {
+                if( (old > 0 && old < local_cache_queue.len()) && 
+                    fs::stat(&local_cache_queue[old]).accessed < fs::stat(&local_cache_queue[i]).accessed) {
                     old = i;
                 }
             }
             local_cache_queue.remove(old);
         });
-    }
+        self.file_arc.access(|local_file_queue| {
+            local_file_queue.remove(old);
+        });
+    }*/
     
     // TODO: Streaming file.
     // TODO: Application-layer file caching.
-    fn respond_with_static_file(&mut self, stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
-        let mut stream = stream;
-        let mut file_reader = File::open(path).expect("Invalid file!");
-        stream.write(HTTP_OK.as_bytes());
-        let byteLength : uint = 1;
-        while(true) {
-            match (file_reader.read_byte()) {
-                Some (byte) => {stream.write_u8(byte);}
-                None => {break}
+    fn respond_with_static_file(stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
+/*      let mut cached : bool = false;
+        let mut index = -1;
+        cache_arc.access(|local_cache_queue| {
+            for i in range(0, local_cache_queue.len()) { 
+                if(local_cache_queue[i] == path.clone()) {
+                    cached = true;
+                    index = i;
+                    break;
+                }
             }
-        }
-        // caching - find out if file is smaller than 10 MB
-        if(fs::stat(path).size < 10485760) {
-            // if cache is less than 10 MB with the file
-            while(self.getCacheSize() + fs::stat(path).size > 10485760) {
-                self.removeCacheFile();
+        });
+        if(cached) {
+            let mut stream = stream;
+            stream.write(HTTP_OK.as_bytes());
+            let byteLength : uint = 1;
+            //while(true) {
+                file_arc.access(|local_file_queue| {
+                    //let temp = local_file_queue[index];
+                    //for i in temp.iter() {
+                       stream.write_str( local_file_queue[index]);
+                    //}
+                });
+            //}
+        } else {*/
+        let bytes = cache.get(path);
+        match(bytes) {
+            Some(bytes) => { 
+                            // in cache
+                            for i in bytes.iter() {
+                                stream.write_u8( bytes[i]);
+                            }
+                        }
+            None =>  {
+                // not in cache
+                let mut stream = stream;
+                let mut file_reader = File::open(path).expect("Invalid file!");
+                stream.write(HTTP_OK.as_bytes());
+                let mut byteArray : ~[u8] = ~[];
+                let byteLength : uint = 1;
+                while(true) {
+                    match (file_reader.read_byte()) {
+                        Some (byte) => {
+                                        stream.write_u8(byte);
+                                        byteArray.push(byte); 
+                                    }
+                        None => {break}
+                    }
+                }
+                // add to cache!
+                // automatically handles removing other elements if necessary
+                cache.put(path, byteArray);
             }
-            self.cache_arc.access(|local_cache_queue| {
-                local_cache_queue.push(path);
-            });
         }
     }
 
@@ -422,7 +460,26 @@ impl WebServer {
                     stream_chan.send(stream);
                 });
             }
-            
+
+            // caching - find out if file is smaller than 1 MB
+            //if(fs::stat(request.path).size < 1048576) {
+                
+            //}
+/*
+            let (c_port, c_chan) = Chan::new();
+            let (f_port, f_chan) = Chan::new();
+            let cache = &self.cache_arc.access(|local_cache_queue| {
+                    c_chan.send(local_cache_queue);
+                });
+            let file = &self.file_arc.access(|local_file_queue| {
+
+                    f_chan.send(local_file_queue);
+                });
+
+            let cache_arc = self.cache_arc.clone();
+            let file_arc = self.file_arc.clone();*/
+            //let stream_map_arc = self.stream_map_arc.clone();*/
+
             // TODO: Spawning more tasks to respond the dequeued requests concurrently. You may need a semophore to control the concurrency.
             spawn(proc() {
                 let stream = stream_port.recv();
