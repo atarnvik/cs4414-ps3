@@ -105,7 +105,7 @@ struct WebServer {
     
     request_queue_arc: MutexArc<PriorityQueue<HTTP_Request>>,
     stream_map_arc: MutexArc<HashMap<~str, Option<std::io::net::tcp::TcpStream>>>,
-    cache: LruCache<Path, ~[~u8]>,
+    cache: MutexArc<LruCache<Path,~[u8]>>,
     
     notify_port: Port<()>,
     shared_notify_chan: SharedChan<()>
@@ -124,23 +124,12 @@ impl WebServer {
                         
             request_queue_arc: MutexArc::new(PriorityQueue::new()),
             stream_map_arc: MutexArc::new(HashMap::new()),
-            cache: LruCache<Path, ~[~u8]> = LruCache::new(10);
+            cache: MutexArc::new(LruCache::new(10)),
 
             notify_port: notify_port,
             shared_notify_chan: shared_notify_chan        
         }
     }
-
-/*    fn getCacheSize(&mut self) -> u64{
-         let mut size = 0;
-         self.cache_arc.access(|local_cache_queue| {
-            debug!("Got cache queue lock.");
-            for i in range(0, local_cache_queue.len()) { 
-                size += fs::stat(&local_cache_queue[i]).size;
-            }
-        });
-        return size;
-    }*/
     
     fn run(&mut self) {
         self.listen();
@@ -257,83 +246,46 @@ impl WebServer {
         debug!("Responding to counter request");
         stream.write(response.as_bytes());
     }
-
-    /*fn removeCacheFile(&mut self) {
-        let mut old = -1;
-        self.cache_arc.access(|local_cache_queue| {
-            debug!("Got cache queue lock.");
-            for i in range(0, local_cache_queue.len()) { 
-                if( (old > 0 && old < local_cache_queue.len()) && 
-                    fs::stat(&local_cache_queue[old]).accessed < fs::stat(&local_cache_queue[i]).accessed) {
-                    old = i;
-                }
-            }
-            local_cache_queue.remove(old);
-        });
-        self.file_arc.access(|local_file_queue| {
-            local_file_queue.remove(old);
-        });
-    }*/
     
     // TODO: Streaming file.
     // TODO: Application-layer file caching.
-    fn respond_with_static_file(stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
-/*      let mut cached : bool = false;
-        let mut index = -1;
-        cache_arc.access(|local_cache_queue| {
-            for i in range(0, local_cache_queue.len()) { 
-                if(local_cache_queue[i] == path.clone()) {
-                    cached = true;
-                    index = i;
-                    break;
-                }
+    fn respond_with_static_file(stream: Option<std::io::net::tcp::TcpStream>, path: &Path, cache: MutexArc<LruCache<Path, ~[u8]>>) {
+        let mut stream = stream;
+        cache.access(|local_cache| {
+            debug!("Got cache queue mutex lock.");
+            let mut bytes = local_cache.get(path);
+            match(bytes) {
+                Some(bytes) => { 
+                                // in cache
+                                for i in bytes.iter() {
+                                    stream.write_u8( bytes[*i]);
+                                }
+                            }
+                None =>  {}
             }
         });
-        if(cached) {
-            let mut stream = stream;
+        cache.access(|local_cache| {
+            // not in cache
+            //let mut stream = stream;
+            let mut file_reader = File::open(path).expect("Invalid file!");
             stream.write(HTTP_OK.as_bytes());
+            let mut byteArray : ~[u8] = ~[];
             let byteLength : uint = 1;
-            //while(true) {
-                file_arc.access(|local_file_queue| {
-                    //let temp = local_file_queue[index];
-                    //for i in temp.iter() {
-                       stream.write_str( local_file_queue[index]);
-                    //}
-                });
-            //}
-        } else {*/
-        let bytes = cache.get(path);
-        match(bytes) {
-            Some(bytes) => { 
-                            // in cache
-                            for i in bytes.iter() {
-                                stream.write_u8( bytes[i]);
-                            }
-                        }
-            None =>  {
-                // not in cache
-                let mut stream = stream;
-                let mut file_reader = File::open(path).expect("Invalid file!");
-                stream.write(HTTP_OK.as_bytes());
-                let mut byteArray : ~[u8] = ~[];
-                let byteLength : uint = 1;
-                while(true) {
-                    match (file_reader.read_byte()) {
-                        Some (byte) => {
-                                        stream.write_u8(byte);
-                                        byteArray.push(byte); 
-                                    }
-                        None => {break}
-                    }
+            while(true) {
+                match (file_reader.read_byte()) {
+                    Some (byte) => {
+                                    stream.write_u8(byte);
+                                    byteArray.push(byte); 
+                                }
+                    None => {break}
                 }
-                // add to cache!
-                // automatically handles removing other elements if necessary
-                cache.put(path, byteArray);
             }
-        }
+            // add to cache!
+            // automatically handles removing other elements if necessary
+            local_cache.put(path.clone(), byteArray);
+        });
+        
     }
-
-
     
     // TODO: Server-side gashing.
     fn respond_with_dynamic_page(stream: Option<std::io::net::tcp::TcpStream>, path: &Path) {
@@ -479,14 +431,16 @@ impl WebServer {
             let cache_arc = self.cache_arc.clone();
             let file_arc = self.file_arc.clone();*/
             //let stream_map_arc = self.stream_map_arc.clone();*/
-
+            //let (c_port, c_chan) = Chan::new();
+            //c_chan.send(self.cache.to_owned());
             // TODO: Spawning more tasks to respond the dequeued requests concurrently. You may need a semophore to control the concurrency.
-            spawn(proc() {
+            //spawn(proc() {
                 let stream = stream_port.recv();
-                WebServer::respond_with_static_file(stream, request.path);
+                //let cache = c_port.recv();
+                WebServer::respond_with_static_file(stream, request.path, self.cache.clone());
                 // Close stream automatically.
                 debug!("=====Terminated connection from [{:s}].=====", request.peer_name);
-            });
+            //});
         }
     }
     
