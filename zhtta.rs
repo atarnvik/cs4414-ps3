@@ -251,14 +251,15 @@ impl WebServer {
     // TODO: Application-layer file caching.
     fn respond_with_static_file(stream: Option<std::io::net::tcp::TcpStream>, path: &Path, cache: MutexArc<LruCache<Path, ~[u8]>>) {
         let mut stream = stream;
+        stream.write(HTTP_OK.as_bytes());
         cache.access(|local_cache| {
             debug!("Got cache queue mutex lock.");
             let mut bytes = local_cache.get(path);
             match(bytes) {
                 Some(bytes) => { 
                                 // in cache
-                                for i in bytes.iter() {
-                                    stream.write_u8( bytes[*i]);
+                                for &i in bytes.iter() {
+                                    stream.write_u8(i);
                                 }
                             }
                 None =>  {}
@@ -268,7 +269,6 @@ impl WebServer {
             // not in cache
             //let mut stream = stream;
             let mut file_reader = File::open(path).expect("Invalid file!");
-            stream.write(HTTP_OK.as_bytes());
             let mut byteArray : ~[u8] = ~[];
             let byteLength : uint = 1;
             while(true) {
