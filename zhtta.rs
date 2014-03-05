@@ -22,6 +22,7 @@ extern mod extra;
 
 use std::io::*;
 use std::io::net::ip::{SocketAddr};
+use std::io::buffered::BufferedReader;
 use std::{os, str, libc, from_str};
 use std::path::Path;
 use std::hashmap::HashMap;
@@ -278,19 +279,28 @@ impl WebServer {
                 //let mut stream = stream;
                 debug!("File not found in cache: {}", path.display());         
                 let mut file_reader = File::open(path).expect("Invalid file!");
-                let mut byteArray : ~[u8] = ~[];
-                while(true) {
-                    match (file_reader.read_byte()) {
-                        Some (byte) => {
-                                        stream.write_u8(byte);
-                                        byteArray.push(byte); 
-                                    }
-                        None => {break}
-                    }
+                let fileSize = fs::stat(path).size;
+                let iterations = fileSize&100000;
+                let mut byteArray: ~[u8] = ~[];
+                if(iterations < 100000) {
+                    let tempArray = file_reader.read_to_end(); 
+                    stream.write(tempArray);
+                    byteArray.push_all_move(tempArray);
                 }
-                // add to cache!
-                // automatically handles removing other elements if necessary
-                if(fs::stat(path).size < 1000000) {
+                else {
+                    for i in range(0, iterations) {
+                        let tempArray = file_reader.read_bytes(100000);
+                        stream.write(tempArray);
+                        byteArray.push_all_move(tempArray);
+                    }
+                    let tempArray = file_reader.read_to_end(); 
+                    stream.write(tempArray);
+                    byteArray.push_all_move(tempArray);
+                }
+                //add to cache!
+                //automatically handles removing other elements if necessary
+                if(fileSize < 10000000) {
+                    debug!("File added to cache: {}", path.display());
                     local_cache.put(path.clone(), byteArray);
                 }
             });
@@ -397,7 +407,7 @@ impl WebServer {
         let cacheArc = self.cache.clone();
 
         //Semaphore for counting tasks
-        let s = Semaphore::new(5);
+        let s = Semaphore::new(4);
         
         // Port<> cannot be sent to another task. So we have to make this task as the main task that can access self.notify_port.
         
@@ -434,6 +444,7 @@ impl WebServer {
             let semaphore = s.clone();
 
 
+            semaphore.acquire();
             // TODO: Spawning more tasks to respond the dequeued requests concurrently. You may need a semophore to control the concurrency.
                 
             semaphore.access( || {
@@ -452,19 +463,23 @@ impl WebServer {
                 let(portRequest, chanRequest) = Chan::new();
                 chanRequest.send(portLocal);
 
+                let (semaphoreRequest, semaphoreChan) = Chan::new();
+                semaphoreChan.send(semaphore.clone());
+
 
                 spawn(proc() {
                     let localCacheArc = portCache.recv();
+                    let portName = portRequest.recv();
+                    let s2 = semaphoreRequest.recv();
                     unsafe {
                         localCacheArc.unsafe_access( |cache| {
-                            WebServer::respond_with_static_file(portStream.recv(), portRequest.recv(), cache.clone());
+                            WebServer::respond_with_static_file(portStream.recv(), portName, cache.clone());
                         });
                     }
                     // Close stream automatically.
-                    //debug!("=====Terminated connection from [{:s}].=====", request.peer_name);
+                    debug!("=====Terminated connection from [{}].=====", portName.display());
+                    s2.release();
                 });
-
-                semaphore.release();
             });
         }
     }
