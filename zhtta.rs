@@ -264,10 +264,21 @@ impl WebServer {
                 Some(bytes) => { 
                                 // in cache
                                 debug!("File found in cache: {}", path.display());
-                                for &i in bytes.iter() {
-                                    stream.write_u8(i);
-                                }
                                 
+                                let size = bytes.len();
+                                let iterations = size %100000;
+                                if(iterations < 100000) {
+                                    stream.write(bytes.to_owned());
+                                }
+                                else {
+                                    for i in range(0, iterations) {
+                                        let start = i * 100000;
+                                        let tempByte = bytes.slice(start,start+100000-1);
+                                        stream.write(tempByte);
+                                    }
+                                    let left = size - (iterations*100000);
+                                    stream.write(bytes.slice_from(left));
+                                }
                                 check = false;
                             }
                 None =>  {}
@@ -299,10 +310,10 @@ impl WebServer {
                 }
                 //add to cache!
                 //automatically handles removing other elements if necessary
-                if(fileSize < 10000000) {
+                //if(fileSize < 10000000) {
                     debug!("File added to cache: {}", path.display());
                     local_cache.put(path.clone(), byteArray);
-                }
+                //}
             });
         }
     }
@@ -441,46 +452,56 @@ impl WebServer {
                 });
             }
 
-            let semaphore = s.clone();
+            if(fs::stat(request.path).size < 1000000) {
+                let mut file_reader = File::open(request.path).expect("Invalid file!");
+                let mut stream = stream_port.recv();
+                stream.write(HTTP_OK.as_bytes());
+                stream.write(file_reader.read_to_end());
+            }
+            else {
+                let semaphore = s.clone();
 
 
-            semaphore.acquire();
-            // TODO: Spawning more tasks to respond the dequeued requests concurrently. You may need a semophore to control the concurrency.
-                
-            semaphore.access( || {
+                semaphore.acquire();
+                // TODO: Spawning more tasks to respond the dequeued requests concurrently. You may need a semophore to control the concurrency.
+                    
+                semaphore.access( || {
 
-                //Sending cache into spawn
-                let(portCache, chanCache) = Chan::new();
-                chanCache.send(cacheArc.clone());
+                    //Sending cache into spawn
+                    let(portCache, chanCache) = Chan::new();
+                    chanCache.send(cacheArc.clone());
 
-                //Sending stream into spawn
-                let streamLocal = stream_port.recv();
-                let(portStream, chanStream) = Chan::new();
-                chanStream.send(streamLocal);
+                    //Sending stream into spawn
+                    let streamLocal = stream_port.recv();
+                    let(portStream, chanStream) = Chan::new();
+                    chanStream.send(streamLocal);
 
-                //Sending request into spawn
-                let portLocal = request_port_local.recv();
-                let(portRequest, chanRequest) = Chan::new();
-                chanRequest.send(portLocal);
+                    //Sending request into spawn
+                    let portLocal = request_port_local.recv();
+                    let(portRequest, chanRequest) = Chan::new();
+                    chanRequest.send(portLocal);
 
-                let (semaphoreRequest, semaphoreChan) = Chan::new();
-                semaphoreChan.send(semaphore.clone());
+                    let (semaphoreRequest, semaphoreChan) = Chan::new();
+                    semaphoreChan.send(semaphore.clone());
 
 
-                spawn(proc() {
-                    let localCacheArc = portCache.recv();
-                    let portName = portRequest.recv();
-                    let s2 = semaphoreRequest.recv();
-                    unsafe {
-                        localCacheArc.unsafe_access( |cache| {
-                            WebServer::respond_with_static_file(portStream.recv(), portName, cache.clone());
-                        });
-                    }
-                    // Close stream automatically.
-                    debug!("=====Terminated connection from [{}].=====", portName.display());
-                    s2.release();
+                    spawn(proc() {
+                        let localCacheArc = portCache.recv();
+                        let portName = portRequest.recv();
+                        let s2 = semaphoreRequest.recv();
+                        unsafe {
+                            localCacheArc.unsafe_access( |cache| {
+                                WebServer::respond_with_static_file(portStream.recv(), portName, cache.clone());
+                            });
+                        }
+                        // Close stream automatically.
+                        debug!("=====Terminated connection from [{}].=====", portName.display());
+                        s2.release();
+                    });
                 });
-            });
+            }
+
+            
         }
     }
     
