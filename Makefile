@@ -1,8 +1,9 @@
 PROGRAM_NAME = zhtta
 
 all: $(PROGRAM_NAME)
+	 $(TOOL_NAME)
 
-$(PROGRAM_NAME): $(PROGRAM_NAME).rs gash.rs
+$(PROGRAM_NAME) : $(PROGRAM_NAME).rs gash.rs
 	rustc $(PROGRAM_NAME).rs
 
 clean :

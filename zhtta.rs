@@ -57,6 +57,7 @@ static COUNTER_STYLE : &'static str = "<doctype !html><html><head><title>Hello, 
              </style></head>
              <body>";
 
+static IP_LOGFILE : &'static str = "../iplog.txt"; //has to be level above b/c working dir is changed to www
 
 struct HTTP_Request {
     // Use peer_name as the key to access TcpStream in hashmap. 
@@ -185,6 +186,8 @@ impl WebServer {
                     
                     let peer_name = WebServer::get_peer_name(&mut stream);
                     
+                    ipToFile(peer_name.clone());
+
                     let mut buf = [0, ..500];
                     stream.read(buf);
                     let request_str = str::from_utf8(buf);
@@ -543,3 +546,16 @@ fn getPriority(other: ~str) -> int{
             return 2;
         }
     }
+
+fn ipToFile(IP_string: ~str) {
+    let mut output_file = File::open_mode(&Path::new(IP_LOGFILE),Append,ReadWrite);
+    match output_file {
+        Some(mut file) => {
+            let stringToWrite: ~str = IP_string + "\n";
+            file.write(stringToWrite.as_bytes());
+        },
+        None => {
+            println!("Failure writing to file");
+        }
+    }
+}
